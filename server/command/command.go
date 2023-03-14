@@ -4,20 +4,20 @@ import (
 	"errors"
 	"strconv"
 	"strings"
-	"tinycached/cache"
-	"tinycached/persistence"
+	"tinycached/server/cache"
+	"tinycached/server/persistence"
 	"tinycached/utils"
 )
 
 type CacheClientInfo struct {
-	group     *cache.CacheGroup
+	cache     *cache.Cache
 	isCAS     bool          // 客户端监视的key中，是否至少有一个已经被其他客户端修改
 	isInMulti bool          // 是否位于事务状态
 	queue     *CommandQueue // 事务命令队列
 }
 
 func NewCacheClient() (clt *CacheClientInfo) {
-	clt.group = nil
+	clt.cache = cache.New(utils.PolicyLRU, 512)
 	clt.isCAS = false
 	clt.isInMulti = false
 	clt.queue = NewCmdQueue()
@@ -26,23 +26,8 @@ func NewCacheClient() (clt *CacheClientInfo) {
 
 func (clt *CacheClientInfo) ExecCmd(cmd []byte, body []byte) (ret []byte, err error) {
 	aof := persistence.AofInstance()
-	group := clt.group
 	elem := strings.Split(string(body), " ")
 	switch string(cmd) {
-	case utils.SELECT.String():
-		if len(elem) < 1 {
-			return nil, errors.New("wrong command")
-		}
-
-		aof.Append(cmd, body)
-		if clt.isInMulti {
-			clt.queue.PushCmd(cmd, body)
-			return []byte("QUEUED"), nil
-		} else {
-			clt.group = cache.GetCacheGroup(elem[0])
-			return []byte("DONE"), nil
-		}
-
 	case utils.GET.String():
 		if len(elem) < 1 {
 			return nil, errors.New("wrong command")
@@ -52,9 +37,9 @@ func (clt *CacheClientInfo) ExecCmd(cmd []byte, body []byte) (ret []byte, err er
 			clt.queue.PushCmd(cmd, body)
 			return []byte("QUEUED"), nil
 		} else {
-			val, err := group.Get(elem[0])
-			if err != nil {
-				return nil, err
+			val, ok := clt.cache.Get(elem[0])
+			if !ok {
+				return nil, errors.New("key is not exits")
 			}
 			return val, nil
 		}
@@ -71,7 +56,7 @@ func (clt *CacheClientInfo) ExecCmd(cmd []byte, body []byte) (ret []byte, err er
 			NotifyModifyed(string(elem[0]))
 			return []byte("QUEUED"), nil
 		} else {
-			group.Add(elem[0], []byte(elem[1]))
+			clt.cache.Add(elem[0], []byte(elem[1]))
 			NotifyModifyed(string(elem[0]))
 			return []byte("DONE"), nil
 		}
@@ -87,7 +72,7 @@ func (clt *CacheClientInfo) ExecCmd(cmd []byte, body []byte) (ret []byte, err er
 			NotifyModifyed(string(elem[0]))
 			return []byte("QUEUED"), nil
 		} else {
-			group.Del(elem[0])
+			clt.cache.Del(elem[0])
 			NotifyModifyed(string(elem[0]))
 			return []byte("DONE"), nil
 		}
@@ -107,7 +92,7 @@ func (clt *CacheClientInfo) ExecCmd(cmd []byte, body []byte) (ret []byte, err er
 			if err != nil {
 				return nil, err
 			}
-			group.SetExpireTimeMs(elem[0], t)
+			clt.cache.SetExpireTimeMs(elem[0], t)
 			NotifyModifyed(string(elem[0]))
 			return []byte("DONE"), nil
 		}

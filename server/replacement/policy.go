@@ -3,7 +3,7 @@ package replacement
 import (
 	"container/list"
 	"time"
-	"tinycached/persistence"
+	"tinycached/server/persistence"
 	"tinycached/utils"
 	"unsafe"
 )

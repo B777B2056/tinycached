@@ -1,19 +1,18 @@
-package network
+package main
 
 import (
 	"io"
 	"log"
 	"net"
 	"strconv"
-	"tinycached/command"
-	"tinycached/persistence"
-	"tinycached/timer"
+	"tinycached/server/command"
+	"tinycached/server/persistence"
+	"tinycached/server/timer"
 	"tinycached/utils"
 )
 
 /*
  * 基础命令
- * SELECT CacheGroup名字\n		选择组，若没有则创建
  * GET KEY名字\n				执行完成后，若找到了则返回值，否则返回NIL\n
  * SET KEY名字 VALUE值\n		执行完成后返回DONE\n
  * DEL KEY名字\n				执行完成后返回DONE\n
@@ -25,23 +24,31 @@ import (
  * DISCARD\n			标记事务取消
  * WATCH KEY名字\n		标记该缓存值需要被监视；若其他客户端在事务执行中修改了该缓存值，则事务执行失败，返回NIL\n
  * UNWATCH KEY名字\n	取消监视
+ * ----------------------------------------------------------------------------------------------
  */
 
 type CacheServer struct {
-	t *timer.Timer
+	t    *timer.Timer
+	port uint16
+}
+
+func NewServer(port uint16) (svr *CacheServer) {
+	svr = &CacheServer{
+		t:    timer.NewTimer(),
+		port: port,
+	}
+	svr.init()
+	return svr
 }
 
 func (svr *CacheServer) init() {
-	// 新建AOF对象
 	aof := persistence.AofInstance()
-	// 新建Timer对象
-	svr.t = timer.NewTimer()
 	// 逐条执行命令，恢复缓存状态
 	isStop := false
 	clt := command.NewCacheClient()
 	for !isStop {
 		// 每次接受一个字符，进入协议解析状态机，并调用相关命令的api
-		svr.parseFSM(clt, func() (byte, bool) {
+		cmd, body, ok := utils.ParseFSM(func() (byte, bool) {
 			ch, ok := aof.GetOneChar()
 			if !ok {
 				isStop = true
@@ -49,15 +56,22 @@ func (svr *CacheServer) init() {
 			}
 			return ch, true
 		})
+		if ok {
+			_, err := clt.ExecCmd(cmd, body)
+			if err != nil {
+				break
+			}
+		} else {
+			break
+		}
 	}
 	// 定时检查AOF并刷入硬盘
 	svr.t.Start(func() { aof.Flush() })
 }
 
-func (svr *CacheServer) Run(port uint16) {
-	svr.init()
+func (svr *CacheServer) run() {
 	defer svr.t.Stop()
-	listen, err := net.Listen("tcp", ":"+strconv.FormatUint(uint64(port), 10))
+	listen, err := net.Listen("tcp", ":"+strconv.FormatUint(uint64(svr.port), 10))
 	if err != nil {
 		panic(err)
 	}
@@ -76,9 +90,9 @@ func (svr *CacheServer) handler(conn net.Conn, clt *command.CacheClientInfo) {
 	char := make([]byte, 1)
 	for !isStop {
 		// 每次接受一个字符，进入协议解析状态机，并调用相关命令的api
-		result := svr.parseFSM(clt, func() (byte, bool) {
-			_, err := conn.Read(char)
-			if err != nil {
+		var result []byte
+		cmd, body, ok := utils.ParseFSM(func() (byte, bool) {
+			if _, err := conn.Read(char); err != nil {
 				if err == io.EOF {
 					isStop = true
 				}
@@ -86,40 +100,21 @@ func (svr *CacheServer) handler(conn net.Conn, clt *command.CacheClientInfo) {
 			}
 			return char[0], true
 		})
-		conn.Write(result)
+		if ok {
+			ret, err := clt.ExecCmd(cmd, body)
+			if err != nil {
+				result = []byte(err.Error())
+			} else {
+				result = ret
+			}
+		} else {
+			result = []byte("FAILED")
+		}
+		utils.WriteAll(conn, result)
 	}
 }
 
-func (svr *CacheServer) parseFSM(clt *command.CacheClientInfo, recv func() (byte, bool)) []byte {
-	cmd := make([]byte, 2)
-	body := make([]byte, 8)
-	curState := utils.CmdSTATE
-	for {
-		ch, ok := recv()
-		if !ok {
-			break
-		}
-
-		if curState == utils.CmdSTATE {
-			cmd = append(cmd, ch)
-			if ch == ' ' {
-				curState++
-			}
-		} else if curState == utils.BodySTATE {
-			body = append(body, ch)
-			if ch == '\n' {
-				curState++
-			}
-		} else if curState == utils.EndSTATE {
-			ret, err := clt.ExecCmd(cmd, body)
-			if err != nil {
-				return []byte(err.Error())
-			} else {
-				return ret
-			}
-		} else {
-			break
-		}
-	}
-	return []byte("")
+func main() {
+	svr := NewServer(7000)
+	svr.run()
 }
