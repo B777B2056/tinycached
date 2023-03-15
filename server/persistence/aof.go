@@ -37,16 +37,20 @@ func AofInstance() *Aof {
 
 func newAof() (aof *Aof) {
 	var err error
+	var file *os.File
 	if checkFileIsExist(aofFilePath) {
-		aof.file, err = os.OpenFile(aofFilePath, os.O_APPEND, 0666)
+		file, err = os.OpenFile(aofFilePath, os.O_APPEND, 0666)
 	} else {
-		aof.file, err = os.Create(aofFilePath)
+		file, err = os.Create(aofFilePath)
 	}
 	if err != nil {
 		panic(err.Error())
 	}
-	aof.buf = make([]byte, 16)
-	aof.reader = bufio.NewReader(aof.file)
+	aof = &Aof{
+		file:   file,
+		buf:    make([]byte, 16),
+		reader: bufio.NewReader(file),
+	}
 	return aof
 }
 

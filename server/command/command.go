@@ -17,10 +17,12 @@ type CacheClientInfo struct {
 }
 
 func NewCacheClient() (clt *CacheClientInfo) {
-	clt.cache = cache.New(utils.PolicyLRU, 512)
-	clt.isCAS = false
-	clt.isInMulti = false
-	clt.queue = NewCmdQueue()
+	clt = &CacheClientInfo{
+		cache:     cache.New(utils.PolicyLRU, 512),
+		isCAS:     false,
+		isInMulti: false,
+		queue:     NewCmdQueue(),
+	}
 	return clt
 }
 

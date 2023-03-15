@@ -4,7 +4,11 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
+	"os/signal"
 	"strconv"
+	"sync/atomic"
+	"syscall"
 	"tinycached/server/command"
 	"tinycached/server/persistence"
 	"tinycached/server/timer"
@@ -28,16 +32,22 @@ import (
  */
 
 type CacheServer struct {
-	t    *timer.Timer
-	port uint16
+	t          *timer.Timer
+	port       uint16
+	sigChannel chan os.Signal
+	isStop     int32
 }
 
 func NewServer(port uint16) (svr *CacheServer) {
 	svr = &CacheServer{
-		t:    timer.NewTimer(),
-		port: port,
+		t:          timer.NewTimer(),
+		port:       port,
+		sigChannel: make(chan os.Signal, 1),
+		isStop:     0,
 	}
 	svr.init()
+	signal.Notify(svr.sigChannel, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
+	go svr.sigHandler()
 	return svr
 }
 
@@ -70,31 +80,37 @@ func (svr *CacheServer) init() {
 }
 
 func (svr *CacheServer) run() {
-	defer svr.t.Stop()
 	listen, err := net.Listen("tcp", ":"+strconv.FormatUint(uint64(svr.port), 10))
 	if err != nil {
 		panic(err)
 	}
-	for {
+
+	for atomic.LoadInt32(&svr.isStop) == 0 {
 		conn, err := listen.Accept()
 		if err != nil {
 			log.Print(err)
 			continue
 		}
-		go svr.handler(conn, command.NewCacheClient())
+		go svr.reqHandler(conn, command.NewCacheClient())
 	}
+
+	svr.t.Stop()
 }
 
-func (svr *CacheServer) handler(conn net.Conn, clt *command.CacheClientInfo) {
-	isStop := false
+func (svr *CacheServer) sigHandler() {
+	<-svr.sigChannel
+	atomic.StoreInt32(&svr.isStop, 1)
+}
+
+func (svr *CacheServer) reqHandler(conn net.Conn, clt *command.CacheClientInfo) {
 	char := make([]byte, 1)
-	for !isStop {
+	for isFinish := false; !isFinish; {
 		// 每次接受一个字符，进入协议解析状态机，并调用相关命令的api
 		var result []byte
 		cmd, body, ok := utils.ParseFSM(func() (byte, bool) {
 			if _, err := conn.Read(char); err != nil {
 				if err == io.EOF {
-					isStop = true
+					isFinish = true
 				}
 				return '-', false
 			}

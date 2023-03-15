@@ -4,8 +4,11 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"tinycached/agent/consistenthash"
 	"tinycached/utils"
 )
@@ -95,11 +98,19 @@ func (agent *cacheAgent) schedule(cltConn net.Conn) {
 }
 
 func (agent *cacheAgent) run(port uint16) {
+	var isStop int32 = 0
+	sigChannel := make(chan os.Signal, 1)
+	go func() {
+		<-sigChannel
+		atomic.StoreInt32(&isStop, 1)
+	}()
+
 	listen, err := net.Listen("tcp", ":"+strconv.FormatUint(uint64(port), 10))
 	if err != nil {
 		panic(err)
 	}
-	for {
+
+	for atomic.LoadInt32(&isStop) == 0 {
 		cltConn, err := listen.Accept()
 		if err != nil {
 			log.Print(err)
@@ -110,7 +121,9 @@ func (agent *cacheAgent) run(port uint16) {
 }
 
 func getKeyFromCmd(cmd []byte, body []byte) string {
-	// TODO
+	if (string(cmd) != utils.MULTI.String()) && (string(cmd) != utils.EXEC.String()) && (string(cmd) != utils.DISCARD.String()) {
+		return strings.Split(string(body), " ")[0]
+	}
 	return ""
 }
 

@@ -8,8 +8,7 @@ type Timer struct {
 }
 
 func NewTimer() (t *Timer) {
-	t.ticker = time.NewTicker(1 * time.Second)
-	t.isStart = false
+	t = &Timer{ticker: time.NewTicker(1 * time.Second), isStart: false}
 	return t
 }
 

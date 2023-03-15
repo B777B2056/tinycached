@@ -14,7 +14,7 @@ type CommandQueue struct {
 }
 
 func NewCmdQueue() (q *CommandQueue) {
-	q.list = list.New()
+	q = &CommandQueue{list: list.New()}
 	return q
 }
 

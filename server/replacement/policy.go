@@ -29,7 +29,7 @@ type kvPair struct {
 type LRUCache struct {
 	usedBytes  uint64
 	maxBytes   uint64
-	cacheQueue list.List
+	cacheQueue *list.List
 	cacheMap   map[string]*list.Element
 	aof        *persistence.Aof
 }
@@ -37,7 +37,7 @@ type LRUCache struct {
 func NewLRUCache(maxBytes uint64) (lru *LRUCache) {
 	lru = &LRUCache{
 		maxBytes:   maxBytes,
-		cacheQueue: *list.New(),
+		cacheQueue: list.New(),
 		cacheMap:   make(map[string]*list.Element),
 		aof:        persistence.AofInstance(),
 	}
