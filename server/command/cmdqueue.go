@@ -2,11 +2,12 @@ package command
 
 import (
 	"container/list"
+	"tinycached/utils"
 )
 
 type element struct {
-	cmd  []byte
-	body []byte
+	cmd  utils.CmdType
+	body string
 }
 
 type CommandQueue struct {
@@ -18,7 +19,7 @@ func NewCmdQueue() (q *CommandQueue) {
 	return q
 }
 
-func (q *CommandQueue) PushCmd(cmd []byte, body []byte) {
+func (q *CommandQueue) PushCmd(cmd utils.CmdType, body string) {
 	q.list.PushBack(&element{cmd, body})
 }
 

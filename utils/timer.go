@@ -1,4 +1,4 @@
-package timer
+package utils
 
 import "time"
 
@@ -7,20 +7,23 @@ type Timer struct {
 	isStart bool
 }
 
-func NewTimer() (t *Timer) {
-	t = &Timer{ticker: time.NewTicker(1 * time.Second), isStart: false}
+func NewTimer(second int) (t *Timer) {
+	t = &Timer{ticker: time.NewTicker(time.Duration(second) * time.Second), isStart: false}
 	return t
 }
 
-func (t *Timer) Start(task func()) {
+func (t *Timer) Start(task func() bool) {
 	if !t.isStart {
 		t.isStart = true
 	} else {
 		return
 	}
+
 	go func() {
 		for range t.ticker.C {
-			task()
+			if !task() {
+				break
+			}
 		}
 	}()
 }

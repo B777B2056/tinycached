@@ -2,55 +2,43 @@ package cache
 
 import (
 	"sync"
-	"tinycached/server/replacement"
-	"tinycached/utils"
 )
 
 type Cache struct {
 	mutex sync.Mutex
-	cache replacement.Cache
+	cache *LRU
 }
 
-func New(policy utils.PolicyType, maxBytes uint64) (obj *Cache) {
-	obj = &Cache{}
-
-	if obj.cache == nil {
-		switch policy {
-		case utils.PolicyLRU:
-			obj.cache = replacement.NewLRUCache(maxBytes)
-		case utils.PolicyLFU:
-			obj.cache = replacement.NewLFUCache(maxBytes)
-		}
-	}
-
-	return obj
+func New(maxBytes uint64) (c *Cache) {
+	c = &Cache{cache: NewLRUCache(maxBytes)}
+	return c
 }
 
-func (obj *Cache) SetExpireTimeMs(key string, expireTimeMs int64) {
-	obj.mutex.Lock()
-	defer obj.mutex.Unlock()
+func (c *Cache) SetExpireTimeMs(key string, expireTimeMs int64) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 
-	obj.cache.SetExpireTimeMs(key, expireTimeMs)
+	c.cache.SetExpireTimeMs(key, expireTimeMs)
 }
 
-func (obj *Cache) Add(key string, value []byte) {
-	obj.mutex.Lock()
-	defer obj.mutex.Unlock()
+func (c *Cache) Add(key string, value []byte) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 
-	obj.cache.Add(key, value)
+	c.cache.Add(key, value)
 }
 
-func (obj *Cache) Del(key string) {
-	obj.mutex.Lock()
-	defer obj.mutex.Unlock()
+func (c *Cache) Del(key string) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 
-	obj.cache.Del(key)
+	c.cache.Del(key)
 }
 
-func (obj *Cache) Get(key string) (value []byte, ok bool) {
-	obj.mutex.Lock()
-	defer obj.mutex.Unlock()
+func (c *Cache) Get(key string) (value []byte, ok bool) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 
-	value, ok = obj.cache.Get(key)
+	value, ok = c.cache.Get(key)
 	return value, ok
 }

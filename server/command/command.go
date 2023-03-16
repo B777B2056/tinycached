@@ -18,7 +18,7 @@ type CacheClientInfo struct {
 
 func NewCacheClient() (clt *CacheClientInfo) {
 	clt = &CacheClientInfo{
-		cache:     cache.New(utils.PolicyLRU, 512),
+		cache:     cache.New(512),
 		isCAS:     false,
 		isInMulti: false,
 		queue:     NewCmdQueue(),
@@ -26,11 +26,11 @@ func NewCacheClient() (clt *CacheClientInfo) {
 	return clt
 }
 
-func (clt *CacheClientInfo) ExecCmd(cmd []byte, body []byte) (ret []byte, err error) {
+func (clt *CacheClientInfo) ExecCmd(cmd utils.CmdType, body string) (ret []byte, err error) {
 	aof := persistence.AofInstance()
-	elem := strings.Split(string(body), " ")
-	switch string(cmd) {
-	case utils.GET.String():
+	elem := strings.Split(string(body), ":")
+	switch cmd {
+	case utils.GET:
 		if len(elem) < 1 {
 			return nil, errors.New("wrong command")
 		}
@@ -46,12 +46,12 @@ func (clt *CacheClientInfo) ExecCmd(cmd []byte, body []byte) (ret []byte, err er
 			return val, nil
 		}
 
-	case utils.SET.String():
+	case utils.SET:
 		if len(elem) < 2 {
 			return nil, errors.New("wrong command")
 		}
 
-		aof.Append(cmd, body) // 记录SET命令
+		aof.Append([]byte(cmd.String()), []byte(body)) // 记录SET命令
 
 		if clt.isInMulti {
 			clt.queue.PushCmd(cmd, body)
@@ -63,12 +63,12 @@ func (clt *CacheClientInfo) ExecCmd(cmd []byte, body []byte) (ret []byte, err er
 			return []byte("DONE"), nil
 		}
 
-	case utils.DEL.String():
+	case utils.DEL:
 		if len(elem) < 1 {
 			return nil, errors.New("wrong command")
 		}
 
-		aof.Append(cmd, body) // 记录DEL命令
+		aof.Append([]byte(cmd.String()), []byte(body)) // 记录DEL命令
 		if clt.isInMulti {
 			clt.queue.PushCmd(cmd, body)
 			NotifyModifyed(string(elem[0]))
@@ -79,12 +79,12 @@ func (clt *CacheClientInfo) ExecCmd(cmd []byte, body []byte) (ret []byte, err er
 			return []byte("DONE"), nil
 		}
 
-	case utils.EXPR.String():
+	case utils.EXPR:
 		if len(elem) < 2 {
 			return nil, errors.New("wrong command")
 		}
 
-		aof.Append(cmd, body) // 记录EXPR命令
+		aof.Append([]byte(cmd.String()), []byte(body)) // 记录EXPR命令
 		if clt.isInMulti {
 			clt.queue.PushCmd(cmd, body)
 			NotifyModifyed(string(elem[0]))
@@ -99,13 +99,13 @@ func (clt *CacheClientInfo) ExecCmd(cmd []byte, body []byte) (ret []byte, err er
 			return []byte("DONE"), nil
 		}
 
-	case utils.MULTI.String():
+	case utils.MULTI:
 		clt.isInMulti = true
-		aof.Append(cmd, body)
+		aof.Append([]byte(cmd.String()), []byte(body))
 		return []byte("DONE"), nil
 
-	case utils.EXEC.String():
-		aof.Append(cmd, body)
+	case utils.EXEC:
+		aof.Append([]byte(cmd.String()), []byte(body))
 		DelWatchKey(string(body), clt)
 		if !clt.isCAS {
 			return nil, errors.New("NIL")
@@ -114,25 +114,25 @@ func (clt *CacheClientInfo) ExecCmd(cmd []byte, body []byte) (ret []byte, err er
 		clt.isInMulti = false
 		return ret, err
 
-	case utils.DISCARD.String():
+	case utils.DISCARD:
 		clt.isInMulti = false
-		aof.Append(cmd, body)
+		aof.Append([]byte(cmd.String()), []byte(body))
 		return []byte("DONE"), nil
 
-	case utils.WATCH.String():
+	case utils.WATCH:
 		if clt.isInMulti {
 			return nil, errors.New("NIL")
 		} else {
-			aof.Append(cmd, body)
+			aof.Append([]byte(cmd.String()), []byte(body))
 			AddWatchKey(string(body), clt)
 			return []byte("DONE"), nil
 		}
 
-	case utils.UNWATCH.String():
+	case utils.UNWATCH:
 		if clt.isInMulti {
 			return nil, errors.New("NIL")
 		} else {
-			aof.Append(cmd, body)
+			aof.Append([]byte(cmd.String()), []byte(body))
 			DelWatchKey(string(body), clt)
 			return []byte("DONE"), nil
 		}

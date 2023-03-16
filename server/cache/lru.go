@@ -1,4 +1,4 @@
-package replacement
+package cache
 
 import (
 	"container/list"
@@ -7,13 +7,6 @@ import (
 	"tinycached/utils"
 	"unsafe"
 )
-
-type Cache interface {
-	Add(key string, value []byte)
-	Get(key string) ([]byte, bool)
-	Del(key string)
-	SetExpireTimeMs(key string, expireTimeMs int64)
-}
 
 type cacheValue struct {
 	value        []byte
@@ -26,7 +19,7 @@ type kvPair struct {
 	cvalue cacheValue
 }
 
-type LRUCache struct {
+type LRU struct {
 	usedBytes  uint64
 	maxBytes   uint64
 	cacheQueue *list.List
@@ -34,8 +27,8 @@ type LRUCache struct {
 	aof        *persistence.Aof
 }
 
-func NewLRUCache(maxBytes uint64) (lru *LRUCache) {
-	lru = &LRUCache{
+func NewLRUCache(maxBytes uint64) (lru *LRU) {
+	lru = &LRU{
 		maxBytes:   maxBytes,
 		cacheQueue: list.New(),
 		cacheMap:   make(map[string]*list.Element),
@@ -44,7 +37,7 @@ func NewLRUCache(maxBytes uint64) (lru *LRUCache) {
 	return lru
 }
 
-func (lru *LRUCache) SetExpireTimeMs(key string, expireTimeMs int64) {
+func (lru *LRU) SetExpireTimeMs(key string, expireTimeMs int64) {
 	elem, ok := lru.cacheMap[key]
 	if !ok {
 		return
@@ -52,7 +45,7 @@ func (lru *LRUCache) SetExpireTimeMs(key string, expireTimeMs int64) {
 	elem.Value.(*kvPair).cvalue.expireTimeMs = expireTimeMs
 }
 
-func (lru *LRUCache) Add(key string, value []byte) {
+func (lru *LRU) Add(key string, value []byte) {
 	// 如果内存耗尽，则淘汰缓存项，直至有内存空间
 	newCache := &kvPair{
 		key: key,
@@ -91,7 +84,7 @@ func (lru *LRUCache) Add(key string, value []byte) {
 	}
 }
 
-func (lru *LRUCache) Del(key string) {
+func (lru *LRU) Del(key string) {
 	elem, ok := lru.cacheMap[key]
 	if !ok {
 		return
@@ -104,7 +97,7 @@ func (lru *LRUCache) Del(key string) {
 	lru.cacheQueue.Remove(elem)
 }
 
-func (lru *LRUCache) Get(key string) ([]byte, bool) {
+func (lru *LRU) Get(key string) ([]byte, bool) {
 	elem, ok := lru.cacheMap[key]
 	if !ok {
 		return nil, false
@@ -128,27 +121,4 @@ func (lru *LRUCache) Get(key string) ([]byte, bool) {
 		lru.cacheMap[key] = lru.cacheQueue.Front()
 	}
 	return targetCopy, true
-}
-
-type LFUCache struct {
-}
-
-func NewLFUCache(maxBytes uint64) (lfu *LFUCache) {
-	return nil
-}
-
-func (lfu *LFUCache) SetExpireTimeMs(key string, expireTimeMs int64) {
-
-}
-
-func (lfu *LFUCache) Add(key string, value []byte) {
-
-}
-
-func (lfu *LFUCache) Del(key string) {
-
-}
-
-func (lfu *LFUCache) Get(key string) ([]byte, bool) {
-	return nil, false
 }
