@@ -1,32 +1,47 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
-	"tinycached/reverse_proxy/consistenthash"
+	"syscall"
+	"tinycached/proxy/consistenthash"
 	"tinycached/utils"
 )
 
-type cacheProxy struct {
-	mutex   sync.Mutex
-	servers map[string]net.Conn // 已上线服务器map，key=服务器地址，value=与服务器的连接对象
-	clients map[net.Conn]string // 已连接客户端map，key=与客户端的连接对象，value=上一次客户端发来的key，用于无key命令的服务器定位
-	hashmap *consistenthash.Map // 一致性哈希
+var (
+	ctx    context.Context
+	cancel context.CancelFunc
+)
+
+func init() {
+	ctx, cancel = context.WithCancel(context.Background())
 }
 
-func newCacheProxy() *cacheProxy {
+type cacheProxy struct {
+	mutex    sync.Mutex
+	servers  map[string]net.Conn // 已上线服务器map，key=服务器地址，value=与服务器的连接对象
+	clients  map[net.Conn]string // 已连接客户端map，key=与客户端的连接对象，value=上一次客户端发来的key，用于无key命令的服务器定位
+	hashmap  *consistenthash.Map // 一致性哈希
+	listener net.Listener
+	sigChan  chan os.Signal
+	wg       sync.WaitGroup
+}
+
+func newCacheProxy(port uint16) *cacheProxy {
 	proxy := &cacheProxy{
 		servers: make(map[string]net.Conn),
 		hashmap: consistenthash.NewConsistentHash(3, nil),
+		sigChan: make(chan os.Signal, 1),
 	}
 	// 从json里load服务器地址
-	svrsTest := []string{"127.0.0.1:7000"}
+	svrsTest := proxy.loadServerAddrs()
 	// 与各个服务器建立连接
 	for _, svrName := range svrsTest {
 		if err := proxy.connectToServer(svrName); err != nil {
@@ -34,7 +49,16 @@ func newCacheProxy() *cacheProxy {
 			break
 		}
 	}
+	// 捕获信号
+	proxy.capSignal()
+	// 监听端口
+	proxy.startListen(port)
 	return proxy
+}
+
+// TODO
+func (proxy *cacheProxy) loadServerAddrs() []string {
+	return []string{"127.0.0.1:7000"}
 }
 
 func (proxy *cacheProxy) connectToServer(svrName string) error {
@@ -45,6 +69,23 @@ func (proxy *cacheProxy) connectToServer(svrName string) error {
 	proxy.servers[svrName] = conn
 	proxy.hashmap.AddNode(svrName)
 	return nil
+}
+
+func (proxy *cacheProxy) capSignal() {
+	signal.Notify(proxy.sigChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-proxy.sigChan
+		proxy.listener.Close()
+		cancel()
+	}()
+}
+
+func (proxy *cacheProxy) startListen(port uint16) {
+	var err error
+	proxy.listener, err = net.Listen("tcp", ":"+strconv.FormatUint(uint64(port), 10))
+	if err != nil {
+		panic(err)
+	}
 }
 
 func (proxy *cacheProxy) chooseServer(cltConn net.Conn, cmd utils.CmdType, arg string) (string, net.Conn, bool) {
@@ -60,13 +101,18 @@ func (proxy *cacheProxy) chooseServer(cltConn net.Conn, cmd utils.CmdType, arg s
 
 func (proxy *cacheProxy) schedule(cltConn net.Conn) {
 	// 接受客户端命令
-	cmd, args := utils.ParseFsm(func() (byte, bool) {
-		char := make([]byte, 1)
+	char := make([]byte, 1)
+	cmd, args, ok := utils.ParseFsm(func() (byte, bool) {
 		if _, err := cltConn.Read(char); err != nil {
 			return '-', false
 		}
 		return char[0], true
 	})
+
+	if !ok {
+		return
+	}
+
 	if cmd == utils.ERROR {
 		utils.WriteAll(cltConn, []byte("Wrong fomat"))
 		return
@@ -104,30 +150,24 @@ func (proxy *cacheProxy) waitAndForwardMsg(svrName string, svrConn net.Conn, clt
 	}
 }
 
-func (proxy *cacheProxy) run(port uint16) {
-	var isStop int32 = 0
-	sigChannel := make(chan os.Signal, 1)
-	go func() {
-		<-sigChannel
-		atomic.StoreInt32(&isStop, 1)
-	}()
-
-	listen, err := net.Listen("tcp", ":"+strconv.FormatUint(uint64(port), 10))
-	if err != nil {
-		panic(err)
-	}
-
-	for atomic.LoadInt32(&isStop) == 0 {
-		cltConn, err := listen.Accept()
-		if err != nil {
-			log.Print(err)
-			continue
-		}
-		go func() {
-			for {
-				proxy.schedule(cltConn)
+func (proxy *cacheProxy) run() {
+	for {
+		select {
+		case <-ctx.Done():
+			proxy.wg.Wait()
+			return
+		default:
+			cltConn, err := proxy.listener.Accept()
+			if err != nil {
+				continue
 			}
-		}()
+			proxy.wg.Add(1)
+			go func() {
+				for {
+					proxy.schedule(cltConn)
+				}
+			}()
+		}
 	}
 }
 
@@ -139,6 +179,6 @@ func getKeyFromCmd(cmd utils.CmdType, arg string) string {
 }
 
 func main() {
-	proxy := newCacheProxy()
-	proxy.run(8888)
+	proxy := newCacheProxy(8888)
+	proxy.run()
 }

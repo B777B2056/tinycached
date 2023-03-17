@@ -110,13 +110,13 @@ func (ctx *fsmContext) setState(state fsmState) {
 	ctx.curState = state
 }
 
-func ParseFsm(recv func() (byte, bool)) (CmdType, []string) {
+func ParseFsm(recv func() (byte, bool)) (CmdType, []string, bool) {
 	ctx := newContext()
 	var ok bool
 	for {
 		ctx.curByte, ok = recv()
 		if !ok {
-			break
+			return ERROR, nil, false
 		}
 
 		state := ctx.getState()
@@ -126,10 +126,10 @@ func ParseFsm(recv func() (byte, bool)) (CmdType, []string) {
 
 		if isEndState || isErrState {
 			if isErrState {
-				return ERROR, nil
+				return ERROR, nil, false
 			}
 			break
 		}
 	}
-	return ctx.getCmd(), ctx.args
+	return ctx.getCmd(), ctx.args, true
 }
